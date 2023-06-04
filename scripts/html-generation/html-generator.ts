@@ -156,6 +156,10 @@ export class HTMLGenerator
 		file.sizerElement.style.width = "100%";
 		file.sizerElement.style.position = "absolute";
 
+		// Copy external PDF links
+		let outlinedPDFs : Downloadable[] = [];
+		outlinedPDFs = await this.copyExternalPDFLinks(file)
+
 		// modify links to work outside of obsidian (including relative links)
 		this.fixLinks(file); 
 		
@@ -177,6 +181,7 @@ export class HTMLGenerator
 		file.contentElement.prepend(mathStyleEl);
 
 		if(addSelfToDownloads) file.downloads.push(file.getSelfDownloadable());
+		file.downloads.push(...outlinedPDFs);
 		file.downloads.push(...outlinedImages);
 		file.downloads.push(...await AssetHandler.getDownloads());
 
@@ -484,6 +489,47 @@ export class HTMLGenerator
 		};
 	}
 
+	private static async copyExternalPDFLinks(file: ExportFile): Promise<Downloadable[]>
+	{
+		let downloads: Downloadable[] = [];
+
+		let elements = Array.from(file.document.querySelectorAll("a"))
+		for (let el of elements)
+		{
+			let rawSrc = el.getAttribute("href") ?? "";
+
+			if (! rawSrc.contains(".pdf") ) continue;
+
+		 	let pdfFile = app.metadataCache.getFirstLinkpathDest(rawSrc, file.markdownFile.path);
+			if (!pdfFile) continue;
+			let pdfPath = new Path(pdfFile.path);
+
+			let exportLocation = pdfPath.copy;
+
+			// if the media is inside the exported folder then keep it in the same place
+			let mediaPathInExport = Path.getRelativePath(file.exportedFolder, pdfPath);
+			if (mediaPathInExport.asString.startsWith(".."))
+			{
+				// if path is outside of the vault, outline it into the media folder
+				exportLocation = AssetHandler.mediaFolderName.joinString(pdfPath.fullName);
+			}
+
+			// let relativeImagePath = Path.getRelativePath(file.exportPath, exportLocation)
+
+			if(ExportSettings.settings.makeNamesWebStyle)
+			{
+				// relativeImagePath.makeWebStyle();
+				exportLocation.makeWebStyle();
+			}
+
+			let data = await pdfPath.readFileBuffer() ?? Buffer.from([]);
+			let pdfDownload = new Downloadable(exportLocation.fullName, data, exportLocation.directory.makeForceFolder());
+			downloads.push(pdfDownload);
+		}
+
+		return downloads;
+	}
+
 	private static async externalizeMedia(file: ExportFile): Promise<Downloadable[]>
 	{
 		let downloads: Downloadable[] = [];
@@ -492,6 +538,7 @@ export class HTMLGenerator
 		for (let mediaEl of elements)
 		{
 			let rawSrc = mediaEl.getAttribute("src") ?? "";
+			
 			if (!rawSrc.startsWith("app:")) continue;
 			
 			let filePath = this.getMediaPath(rawSrc);
